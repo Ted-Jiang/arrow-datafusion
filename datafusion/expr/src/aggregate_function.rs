@@ -86,6 +86,9 @@ pub enum AggregateFunction {
     ApproxPercentileContWithWeight,
     /// ApproxMedian
     ApproxMedian,
+
+    /// Kylin BitMap count distinct function
+    KylinBitMapCountDistinct,
 }
 
 impl fmt::Display for AggregateFunction {
@@ -121,6 +124,7 @@ impl FromStr for AggregateFunction {
                 AggregateFunction::ApproxPercentileContWithWeight
             }
             "approx_median" => AggregateFunction::ApproxMedian,
+            "kylin_bitmap_distinct" => AggregateFunction::KylinBitMapCountDistinct,
             _ => {
                 return Err(DataFusionError::Plan(format!(
                     "There is no built-in function named {}",
@@ -144,9 +148,9 @@ pub fn return_type(
 
     match fun {
         // TODO If the datafusion is compatible with PostgreSQL, the returned data type should be INT64.
-        AggregateFunction::Count | AggregateFunction::ApproxDistinct => {
-            Ok(DataType::UInt64)
-        }
+        AggregateFunction::Count
+        | AggregateFunction::ApproxDistinct
+        | AggregateFunction::KylinBitMapCountDistinct => Ok(DataType::UInt64),
         AggregateFunction::Max | AggregateFunction::Min => {
             // For min and max agg function, the returned type is same as input type.
             // The coerced_data_types is same with input_types.
@@ -326,6 +330,15 @@ pub fn coerce_types(
             }
             Ok(input_types.to_vec())
         }
+        AggregateFunction::KylinBitMapCountDistinct => {
+            if !is_kylin_bitmap_count_distinct_supported_arg_type(&input_types[0]) {
+                return Err(DataFusionError::Plan(format!(
+                    "The function {:?} does not support inputs of type {:?}.",
+                    agg_fun, input_types[0]
+                )));
+            }
+            Ok(input_types.to_vec())
+        }
     }
 }
 
@@ -335,7 +348,10 @@ pub fn signature(fun: &AggregateFunction) -> Signature {
     match fun {
         AggregateFunction::Count
         | AggregateFunction::ApproxDistinct
-        | AggregateFunction::ArrayAgg => Signature::any(1, Volatility::Immutable),
+        | AggregateFunction::ArrayAgg
+        | AggregateFunction::KylinBitMapCountDistinct => {
+            Signature::any(1, Volatility::Immutable)
+        }
         AggregateFunction::Min | AggregateFunction::Max => {
             let valid = STRINGS
                 .iter()
@@ -697,6 +713,12 @@ pub fn is_approx_percentile_cont_supported_arg_type(arg_type: &DataType) -> bool
             | DataType::Float32
             | DataType::Float64
     )
+}
+
+pub(crate) fn is_kylin_bitmap_count_distinct_supported_arg_type(
+    arg_type: &DataType,
+) -> bool {
+    matches!(arg_type, DataType::Binary)
 }
 
 #[cfg(test)]

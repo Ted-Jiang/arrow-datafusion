@@ -232,6 +232,13 @@ pub fn create_aggregate_expr(
                 return_type,
             )?)
         }
+        (AggregateFunction::KylinBitMapCountDistinct, _) => Arc::new(
+            expressions::kylin::kylin_bitmap_distinct::KylinBitMapDistinct::new(
+                coerced_phy_exprs[0].clone(),
+                name,
+                coerced_exprs_types[0].clone(),
+            ),
+        ),
         (AggregateFunction::ApproxPercentileContWithWeight, true) => {
             return Err(DataFusionError::NotImplemented(
                 "approx_percentile_cont_with_weight(DISTINCT) aggregations are not available"

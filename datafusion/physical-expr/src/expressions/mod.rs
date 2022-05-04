@@ -33,6 +33,8 @@ mod not;
 mod nullif;
 mod try_cast;
 
+pub mod kylin;
+
 /// Module with some convenient methods used in expression building
 pub mod helpers {
     pub use crate::aggregate::min_max::{max, min};

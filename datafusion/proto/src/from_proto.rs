@@ -495,6 +495,10 @@ impl From<protobuf::AggregateFunction> for AggregateFunction {
                 Self::ApproxPercentileContWithWeight
             }
             protobuf::AggregateFunction::ApproxMedian => Self::ApproxMedian,
+
+            protobuf::AggregateFunction::KylinBitmapCountDistinct => {
+                Self::KylinBitMapCountDistinct
+            }
         }
     }
 }
