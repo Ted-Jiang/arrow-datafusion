@@ -122,6 +122,24 @@ fn remove_filters(
         .collect::<Vec<_>>()
 }
 
+// rename all filter columns which have alias name
+fn rename_filters_column_name(
+    filters: &mut [Predicate],
+    alias_cols_expr_and_name: &HashMap<&Expr, &String>,
+) {
+    for (expr, columns) in filters {
+        //TODO support multi columns filter alias
+        if alias_cols_expr_and_name.contains_key(expr) && columns.len() == 1 {
+            let col_string = <&std::string::String>::clone(
+                alias_cols_expr_and_name.get(expr).unwrap(),
+            );
+            let column = Column::from_qualified_name(col_string);
+            columns.clear();
+            columns.insert(column);
+        }
+    }
+}
+
 /// builds a new [LogicalPlan] from `plan` by issuing new [LogicalPlan::Filter] if any of the filters
 /// in `state` depend on the columns `used_columns`.
 fn issue_filters(
@@ -336,6 +354,18 @@ fn optimize(plan: &LogicalPlan, mut state: State) -> Result<LogicalPlan> {
         LogicalPlan::Analyze { .. } => push_down(&state, plan),
         LogicalPlan::Filter(Filter { input, predicate }) => {
             let mut predicates = vec![];
+            let mut alias_cols_expr_and_name = HashMap::new();
+            //Need rewrite column name before push down
+            let input_plan = &*input.clone();
+            if let LogicalPlan::Projection(projection) = input_plan {
+                let exprs = &projection.expr;
+                for e in exprs {
+                    if let Expr::Alias(col_expr, alias_name) = e {
+                        alias_cols_expr_and_name.insert(col_expr.as_ref(), alias_name);
+                    }
+                }
+            }
+
             utils::split_conjunction(predicate, &mut predicates);
 
             // Predicates without referencing columns (WHERE FALSE, WHERE 1=1, etc.)
@@ -364,6 +394,12 @@ fn optimize(plan: &LogicalPlan, mut state: State) -> Result<LogicalPlan> {
                     &no_col_predicates,
                 ))
             } else {
+                if !alias_cols_expr_and_name.is_empty() {
+                    rename_filters_column_name(
+                        &mut state.filters,
+                        &alias_cols_expr_and_name,
+                    )
+                }
                 optimize(input, state)
             }
         }
@@ -1826,6 +1862,39 @@ mod tests {
         let expected ="Projection: #a, #b\
             \n  Filter: #a = Int64(10) AND #b > Int64(11)\
             \n    TableScan: test projection=Some([a]), partial_filters=[#a = Int64(10), #b > Int64(11)]";
+
+        assert_optimized_plan_eq(&plan, expected);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_filter_with_alias() -> Result<()> {
+        // in table scan the true col name is 'test.a',
+        // but we rename it as 'b', and use col 'b' in filter
+        // we need rewrite filter col before push down.
+        let table_scan = test_table_scan()?;
+        let plan = LogicalPlanBuilder::from(table_scan)
+            .project(vec![col("a").alias("b"), col("c")])?
+            .filter(and(col("b").gt(lit(10i64)), col("c").gt(lit(10i64))))?
+            .build()?;
+
+        // filter on col b
+        assert_eq!(
+            format!("{:?}", plan),
+            "\
+            Filter: #b > Int64(10) AND #test.c > Int64(10)\
+            \n  Projection: #test.a AS b, #test.c\
+            \n    TableScan: test projection=None\
+            "
+        );
+
+        // rewrite filter col to test.a
+        let expected = "\
+            Projection: #test.a AS b, #test.c\
+            \n  Filter: #test.a > Int64(10) AND #test.c > Int64(10)\
+            \n    TableScan: test projection=None\
+            ";
 
         assert_optimized_plan_eq(&plan, expected);
 

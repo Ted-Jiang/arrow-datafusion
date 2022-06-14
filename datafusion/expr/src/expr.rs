@@ -287,6 +287,8 @@ impl PartialOrd for Expr {
     }
 }
 
+impl Eq for Expr {}
+
 impl Expr {
     /// Returns the name of this expression based on [datafusion_common::DFSchema].
     ///
